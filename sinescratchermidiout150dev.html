@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Tone.js Scratch Synth w/ MIDI Output</title>
+  <script src="https://unpkg.com/tone@14.8.49/build/Tone.js"></script>
+  <style>
+    body {
+      font-family: sans-serif;
+      background: #111;
+      color: #eee;
+      padding: 10px;
+      margin: 0;
+    }
+
+    .panel {
+      border: 1px solid #444;
+      padding: 10px;
+      width: 400px;
+    }
+
+    button,
+    input,
+    select {
+      width: 100%;
+      margin: 4px 0;
+      font-size: 0.85em;
+    }
+
+    .label {
+      font-size: 0.75em;
+      opacity: 0.8;
+    }
+
+    .counter {
+      font-size: 1em;
+      margin: 8px 0;
+    }
+
+    select {
+      font-size: 0.85em;
+    }
+
+    h3 {
+      font-size: 1.1em;
+      margin-bottom: 8px;
+      margin-top: 12px;
+    }
+
+    /* Compact the sliders */
+    input[type="range"] {
+      width: 100%;
+      height: 10px;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="panel">
+    <h3>Transport</h3>
+    <button id="start">Start</button>
+    <button id="stop">Stop (Reset)</button>
+
+    <div class="counter">
+      Bar : Beat<br>
+      <span id="position">0 : 0</span>
+    </div>
+
+    <h3>MIDI Input</h3>
+    <select id="midiSelect"><option value="">No MIDI</option></select>
+
+    <h3>MIDI Output</h3>
+    <select id="midiOutSelect"><option value="">No Output</option></select>
+
+    <h3>Scale</h3>
+    <select id="scaleSelect">
+      <option value="aMinorPentatonic">A Minor Pentatonic</option>
+      <option value="cMajorPentatonic">C Major Pentatonic</option>
+      <option value="dMinorPentatonic">D Minor Pentatonic</option>
+      <option value="chromatic">Chromatic</option>
+    </select>
+
+    <h3>Resolution</h3>
+    <input id="resolutionSlider" type="range" min="0" max="127" value="0">
+    <div id="resolutionLabel" class="label">1/32</div>
+
+    <h3>Pitch</h3>
+    <input id="pitchSlider" type="range" min="0" max="127" value="64">
+    <div id="pitchLabel" class="label">A2</div>
+
+    <h3>Glide</h3>
+    <input id="glideSlider" type="range" min="0" max="127" value="10">
+    <div id="glideLabel" class="label">20 ms</div>
+
+    <h3>Vowel</h3>
+    <input id="vowelSlider" type="range" min="0" max="127" value="0">
+    <div id="vowelLabel" class="label">A</div>
+
+    <h3>Bass Pitch</h3>
+    <input id="bassSlider" type="range" min="0" max="127" value="32">
+    <div id="bassLabel" class="label">55 Hz</div>
+
+    <h3>Bass Distortion / Bitcrusher</h3>
+    <input id="bassDistSlider" type="range" min="0" max="127" value="0">
+    <div id="bassDistLabel" class="label">0%</div>
+
+    <h3>Noise Filter (fixed)</h3>
+    <input id="noiseSlider" type="range" min="0" max="127" value="127" disabled>
+
+    <h3>Saturation (fixed)</h3>
+    <input id="saturationSlider" type="range" min="0" max="127" value="127" disabled>
+  </div>
+
+  <script>
+    /* ================= TRANSPORT ================= */
+    Tone.Transport.bpm.value = 75;
+    Tone.Transport.timeSignature = [4,4];
+
+    /* ================= DRUM LOOP ================= */
+    const loopPlayer = new Tone.Player({ url:"150c.wav", loop:true, autostart:false }).toDestination();
+    loopPlayer.volume.value = -8;
+    loopPlayer.loopEnd = "16m";
+    loopPlayer.sync();
+
+    /* ================= SOURCES ================= */
+    const osc = new Tone.Oscillator({ type:"sine", frequency:400 }).start();
+    const noise = new Tone.Noise("white").start();
+    const noiseFilter = new Tone.Filter(6000,"lowpass");
+    noise.connect(noiseFilter);
+
+    /* ================= VOWEL FORMANTS ================= */
+    const vowels = [
+      { name:"A", f1:800, f2:1150 },
+      { name:"E", f1:500, f2:1700 },
+      { name:"I", f1:300, f2:2200 },
+      { name:"O", f1:450, f2:800 },
+      { name:"U", f1:325, f2:700 }
+    ];
+    const vowelNodes = vowels.map(v=>{
+      const f1 = new Tone.Filter(v.f1,"bandpass");
+      const f2 = new Tone.Filter(v.f2,"bandpass");
+      f1.Q.value=f2.Q.value=10;
+      const g=new Tone.Gain(0);
+      osc.connect(f1); osc.connect(f2);
+      noiseFilter.connect(f1); noiseFilter.connect(f2);
+      f1.connect(g); f2.connect(g);
+      return { gain:g, name:v.name };
+    });
+    vowelNodes[0].gain.gain.value = 1;
+    vowelLabel.textContent = vowelNodes[0].name;
+    vowelSlider.value = 0;
+
+    /* ================= SATURATION ================= */
+    const saturation = new Tone.Distortion(1.0);
+    saturation.oversample="4x";
+    vowelNodes.forEach(v=>v.gain.connect(saturation));
+
+    /* ================= OUTPUT / PULSE GATE ================= */
+    const outputGain = new Tone.Gain(0).toDestination();
+    saturation.connect(outputGain);
+
+    /* ================= GROWL BASS ================= */
+    const bass = new Tone.Oscillator({ type:"sawtooth", frequency:55 }).start();
+    const bassFilter = new Tone.Filter(200,"lowpass");
+    const bassLFO = new Tone.LFO(2, 100, 1000);
+    bassLFO.connect(bassFilter.frequency);
+    bassLFO.start();
+
+    const bassDist = new Tone.Distortion(0.0);
+    bassDist.oversample = "4x";
+
+    bass.connect(bassFilter);
+    bassFilter.connect(bassDist);
+    bassDist.connect(saturation);
+
+    /* ================= RESOLUTION LOOP ================= */
+    const resolutions=[
+      { label:"1/32", interval:"32n" },
+      { label:"1/16", interval:"16n" },
+      { label:"1/4", interval:"4n" },
+      { label:"1/6", interval:"6n" },
+      { label:"1/8", interval:"8n" },
+      { label:"1/12", interval:"12n" },
+      { label:"1/16", interval:"16n" },
+      { label:"1/24", interval:"24n" }
+    ];
+    let resIndex=0;
+    let pulseLoop;
+
+    function freqToMidi(freq){ return Math.round(69 + 12 * Math.log2(freq/440)); }
+
+    let midiOutSelect=document.getElementById("midiOutSelect");
+    let activeOutput=null;
+    function sendMidiNote(freq){
+      if(activeOutput){
+        const note = freqToMidi(freq);
+        activeOutput.send([0x90,note,100]);
+        const dur = Tone.Time("64n").toMilliseconds();
+        setTimeout(()=>{ activeOutput.send([0x80,note,0]); }, dur);
+      }
+    }
+
+    function createPulseLoop() {
+      if(pulseLoop) pulseLoop.dispose();
+      const intervalSeconds = Tone.Time(resolutions[resIndex].interval).toSeconds();
+      const ramp = intervalSeconds * 0.2;
+      pulseLoop = new Tone.Loop(time => {
+        outputGain.gain.setValueAtTime(0,time);
+        outputGain.gain.linearRampToValueAtTime(1,time+ramp);
+        outputGain.gain.linearRampToValueAtTime(0,time+ramp*2);
+
+        sendMidiNote(osc.frequency.value);
+      }, resolutions[resIndex].interval).start(0);
+    }
+    createPulseLoop();
+
+    /* ================= SCALES ================= */
+    const scaleMap = {
+      aMinorPentatonic:[0,3,5,7,10],
+      cMajorPentatonic:[0,2,4,7,9],
+      dMinorPentatonic:[0,3,5,7,10],
+      chromatic:[0,1,2,3,4,5,6,7,8,9,10,11]
+    };
+    let currentScale="aMinorPentatonic";
+    const BASE_MIDI_NOTE={aMinorPentatonic:45, cMajorPentatonic:48, dMinorPentatonic:50, chromatic:45};
+
+    /* ================= SLIDERS ================= */
+    resolutionSlider.oninput=e=>{
+      resIndex=Math.min(Math.floor(e.target.value/(128/resolutions.length)),resolutions.length-1);
+      resolutionLabel.textContent=resolutions[resIndex].label;
+      createPulseLoop();
+    };
+
+    pitchSlider.oninput=e=>{
+      const scale=scaleMap[currentScale];
+      const steps=20;
+      const index=Math.floor((e.target.value/127)*steps);
+      const scaleDegree=scale[index%scale.length];
+      const octave=Math.floor(index/scale.length);
+      const midiNote=BASE_MIDI_NOTE[currentScale]+scaleDegree+octave*12;
+      const freq=440*Math.pow(2,(midiNote-69)/12);
+      osc.frequency.rampTo(freq,0.02);
+      pitchLabel.textContent=`MIDI ${midiNote}`;
+    };
+
+    glideSlider.oninput=e=>{
+      glideTime=(e.target.value/127)*0.2;
+      glideLabel.textContent=`${Math.round(glideTime*1000)} ms`;
+    };
+
+    vowelSlider.oninput=e=>{
+      const pos=(e.target.value/127)*(vowelNodes.length-1);
+      const i=Math.floor(pos);
+      const frac=pos-i;
+      vowelNodes.forEach((v,idx)=>{
+        let g=0;
+        if(idx===i) g=1-frac;
+        if(idx===i+1) g=frac;
+        v.gain.gain.rampTo(g,0.02);
+      });
+      vowelLabel.textContent=vowelNodes[i].name;
+    };
+
+    bassSlider.oninput=e=>{
+      const freq = 40 + (e.target.value/127)*(200-40);
+      bass.frequency.rampTo(freq,0.05);
+      bassLabel.textContent=`${Math.round(freq)} Hz`;
+    };
+
+    bassDistSlider.oninput=e=>{
+      const val = e.target.value/127;
+      bassDist.distortion = val;
+      bassDistLabel.textContent = `${Math.round(val*100)}%`;
+    };
+
+    /* ================= SCALE SELECT ================= */
+    scaleSelect.onchange=e=>{ currentScale=e.target.value; };
+
+    /* ================= MIDI INPUT ================= */
+    const midiSelect=document.getElementById("midiSelect");
+    let activeInput=null;
+    const ccMap={1:resolutionSlider,2:pitchSlider,3:glideSlider,4:vowelSlider,5:bassDistSlider};
+    const midiQueue={1:null,2:null,3:null,4:null,5:null};
+
+    navigator.requestMIDIAccess().then(midi=>{
+      // Inputs
+      for(let input of midi.inputs.values()){
+        const opt=document.createElement("option");
+        opt.value=input.id; opt.textContent=input.name;
+        midiSelect.appendChild(opt);
+      }
+
+      midiSelect.onchange=()=>{
+        if(activeInput) activeInput.onmidimessage=null;
+        activeInput=midi.inputs.get(midiSelect.value);
+
+        if(activeInput){
+          activeInput.onmidimessage=e=>{
+            const [status, cc, val]=e.data;
+            if((status&0xF0)===0xB0 && ccMap[cc]){
+              midiQueue[cc]=val;
+            }
+          };
+        }
+      };
+
+      // Outputs
+      for(let output of midi.outputs.values()){
+        const opt=document.createElement("option");
+        opt.value=output.id; opt.textContent=output.name;
+        midiOutSelect.appendChild(opt);
+      }
+
+      midiOutSelect.onchange = ()=>{
+        activeOutput = midi.outputs.get(midiOutSelect.value);
+      }
+    });
+
+    // Apply queued CCs every 16th note
+    Tone.Transport.scheduleRepeat(time=>{
+      for(let cc in midiQueue){
+        if(midiQueue[cc] !== null){
+          ccMap[cc].value = midiQueue[cc];
+          ccMap[cc].dispatchEvent(new Event("input"));
+          midiQueue[cc]=null;
+        }
+      }
+    },"16n");
+
+    /* ================= TRANSPORT ================= */
+    start.onclick=async()=>{
+      await Tone.start();
+      loopPlayer.start(0);
+      Tone.Transport.start();
+    };
+
+    stop.onclick=()=>{
+      Tone.Transport.stop();
+      Tone.Transport.position="0:0:0";
+    };
+
+    /* ================= COUNTER ================= */
+    Tone.Transport.scheduleRepeat(()=>{
+      const [b,bt]=Tone.Transport.position.split(":");
+      position.textContent=`${parseInt(b)} : ${parseInt(bt)}`;
+    },"8n");
+
+  </script>
+
+</body>
+</html>

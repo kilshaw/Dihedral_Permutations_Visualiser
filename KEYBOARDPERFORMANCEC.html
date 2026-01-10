@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>D₆ Scratch Engine with MIDI Input (Note On/Off)</title>
+
+<style>
+body {
+  margin: 0;
+  background: #111;
+  color: #eee;
+  font-family: system-ui, sans-serif;
+}
+.container { display: flex; gap: 20px; padding: 20px; }
+
+/* NEW: Explanation Panel */
+.help {
+  max-width: 320px;
+  margin-bottom: 12px;
+  padding: 10px;
+  border: 1px solid #444;
+  background: #1a1a1a;
+  border-radius: 6px;
+  font-size: 0.9em;
+  line-height: 1.4;
+}
+.help strong { display:block; margin-bottom:4px; }
+
+/* Light grey text */
+.help p {
+  color: #ccc;  /* Light grey */
+}
+
+/* LEFT */
+.left-panel { display: flex; flex-direction: column; gap: 8px; max-width: 320px; }
+.left-title { text-align: center; font-size: 14px; font-weight: 600; }
+.all-matrices { display: flex; flex-wrap: wrap; gap: 8px; }
+.matrix-panel { background: #222; border-radius: 8px; padding: 6px; width: 70px; border: 1px solid #444; }
+.matrix-title { text-align: center; font-size: 12px; }
+.matrix { display: grid; grid-template-columns: repeat(2,1fr); gap: 3px; }
+.cell { height: 22px; background: #444; border: 1px solid #666; color: #fff; font-size: 12px; display: flex; align-items: center; justify-content: center; }
+
+/* CENTER */
+.center-panel { display: flex; flex-direction: column; align-items: center; }
+svg { background: #1c1c1c; border-radius: 12px; }
+button { margin: 2px; padding: 4px 10px; transition: transform 0.12s ease, background-color 0.12s ease; }
+button.active { transform: scale(1.15); background: #4fc3f7; color: #000; }
+button.flash-red { background: #ff4444 !important; color: #000; transform: scale(1.1); }
+
+/* Animate circles */
+circle, text { transition: cx 1.6s ease, cy 1.6s ease, x 1.6s ease, y 1.6s ease, r 0.12s ease, stroke 0.12s ease, fill 0.12s ease; }
+
+/* Polygon pulse */
+polygon { transition: stroke-width 0.12s ease, stroke 0.12s ease; }
+polygon.pulse-rot { stroke: #4fc3f7; stroke-width: 5; }
+polygon.pulse-ref { stroke: #ff5555; stroke-width: 5; }
+
+/* RIGHT */
+.current-matrix-panel { background: #1c1c1c; border-radius: 12px; padding: 12px; min-width: 200px; border: 1px solid #444; display: flex; flex-direction: column; gap: 8px; }
+.log { font-family: monospace; font-size: 13px; max-height: 260px; overflow-y: auto; }
+
+/* Slider */
+.slider-wrap { display: flex; flex-direction: column; gap: 4px; }
+input[type="range"] { width: 140px; }
+</style>
+</head>
+
+<body>
+<div class="container">
+
+<!-- UPDATED: Explanation Panel with new content -->
+<div class="help">
+  <h4><strong>How to play in Dihedral Transformational Space</strong></h4>
+  <p>• Generate String creates a random set of values that can move through the permutation space. Use the spacebar</p>
+  <p>• Use the Rotation buttons to rotate the matrix (r⁰, r¹, ...)</p>
+  <p>• Use the Reflection buttons (s, sr¹, ...) to reflect the matrix</p>
+  <br>
+  <p>• You can also use keyboard shortcuts (top row) for faster control (1-6 for rotations, 7-= for reflections). The spacebar triggers a new Generate String Permutation order is outputted to midi cc 1-6.</p>
+<br>
+<p> Simon Kilshaw 2026</p>
+<a href="/listener.html" onclick="openInWindow('/listener.html', 'Visualiser', 800, 600); return false;">Visualiser</a>
+<a href="/sinescratchermidiout150dev.html" onclick="openInWindow('/sinescratchermidiout150dev.html', 'DihedralDubstepWobbler', 800, 600); return false;">Dihedral Dubstep Wobbler</a>
+
+<script>
+function openInWindow(url, windowName, width, height) {
+    const left = (screen.width - width) / 2;
+    const top = (screen.height - height) / 2;
+    window.open(
+        url,
+        windowName,
+        `width=${width},height=${height},top=${top},left=${left},resizable=yes,scrollbars=yes`
+    );
+}
+</script>
+</div>
+
+<!-- LEFT -->
+<div class="left-panel">
+  <div class="left-title">12 Dihedral permutations</div>
+  <div class="all-matrices" id="allMatrices"></div>
+</div>
+
+<!-- CENTER -->
+<div class="center-panel">
+  <strong>D₆ Group</strong>
+  <svg id="svg" width="320" height="320" viewBox="-160 -160 320 320"></svg>
+  <div>
+    <strong>Rotations</strong><br>
+    <button id="btn-r0" onclick="rot(0)">r⁰</button>
+    <button id="btn-r1" onclick="rot(1)">r¹</button>
+    <button id="btn-r2" onclick="rot(2)">r²</button>
+    <button id="btn-r3" onclick="rot(3)">r³</button>
+    <button id="btn-r4" onclick="rot(4)">r⁴</button>
+    <button id="btn-r5" onclick="rot(5)">r⁵</button><br>
+    <strong>Reflections</strong><br>
+    <button id="btn-s0" onclick="ref(0)">s</button>
+    <button id="btn-s1" onclick="ref(1)">sr</button>
+    <button id="btn-s2" onclick="ref(2)">sr²</button>
+    <button id="btn-s3" onclick="ref(3)">sr³</button>
+    <button id="btn-s4" onclick="ref(4)">sr⁴</button>
+    <button id="btn-s5" onclick="ref(5)">sr⁵</button>
+  </div>
+  <div id="permDisplay"></div>
+  <div id="algDisplay"></div>
+  <div id="cycleDisplay" style="font-family:monospace; font-size:13px;"></div>
+</div>
+
+<!-- RIGHT -->
+<div class="current-matrix-panel">
+  <strong>Current Matrix</strong>
+  <div class="matrix" id="matrix"></div>
+  <button id="btn-generate" onclick="generate()">Generate String</button>
+  <div class="slider-wrap">
+    <label>Ramp time: <span id="rampLabel">000</span> ms</label>
+    <input type="range" min="0" max="2000" value="000" id="rampSlider">
+  </div>
+  <div class="log" id="log"></div>
+</div>
+
+</div>
+
+<script>
+const N=6;
+const R=100;
+const svg=document.getElementById("svg");
+const matrixDiv=document.getElementById("matrix");
+const logDiv=document.getElementById("log");
+const rampSlider=document.getElementById("rampSlider");
+const rampLabel=document.getElementById("rampLabel");
+
+let rampTime=000;
+let lastOpType="rot";
+let circleColor=randomColor();
+let midiOut=null;
+
+rampSlider.oninput=()=>{ rampTime=+rampSlider.value; rampLabel.textContent=rampTime; };
+
+const positions=[];
+const circles=[];
+let values=[1,2,3,4,5,6];
+let permValues=[...values];
+
+/* MIDI OUT */
+navigator.requestMIDIAccess?.().then(midi=>{
+  midiOut=[...midi.outputs.values()][0]||null;
+});
+
+/* POLYGON */
+const poly=document.createElementNS("http://www.w3.org/2000/svg","polygon");
+poly.setAttribute("fill","none");
+poly.setAttribute("stroke","#aaa");
+poly.setAttribute("stroke-width","2");
+svg.appendChild(poly);
+
+/* HEXAGON */
+for(let i=0;i<N;i++){
+  const a=2*Math.PI*i/N-Math.PI/2;
+  const x=R*Math.cos(a);
+  const y=R*Math.sin(a);
+  positions.push({x,y});
+
+  const c=document.createElementNS("http://www.w3.org/2000/svg","circle");
+  c.setAttribute("r",10);
+  c.setAttribute("fill",circleColor);
+  c.setAttribute("stroke","none");
+  svg.appendChild(c);
+
+  const t=document.createElementNS("http://www.w3.org/2000/svg","text");
+  t.setAttribute("fill","#fff");
+  t.setAttribute("text-anchor","middle");
+  t.setAttribute("dominant-baseline","middle");
+  svg.appendChild(t);
+
+  circles.push({circle:c,text:t});
+}
+
+/* POLYGON PULSE */
+function pulsePolygon(){
+  const cls = lastOpType==="ref"?"pulse-ref":"pulse-rot";
+  poly.classList.add(cls);
+  setTimeout(()=>poly.classList.remove(cls),120);
+}
+
+/* RENDER */
+function renderAnimated(oldValues){
+  for(let i=0;i<N;i++){
+    const src=oldValues.indexOf(permValues[i]);
+    const {x,y}=positions[i];
+    circles[src].circle.setAttribute("cx",x);
+    circles[src].circle.setAttribute("cy",y);
+    circles[src].text.setAttribute("x",x);
+    circles[src].text.setAttribute("y",y);
+  }
+  poly.setAttribute("points",positions.map(p=>`${p.x},${p.y}`).join(" "));
+}
+
+function render(){
+  for(let i=0;i<N;i++){
+    const {x,y}=positions[i];
+    circles[i].circle.setAttribute("cx",x);
+    circles[i].circle.setAttribute("cy",y);
+    circles[i].text.setAttribute("x",x);
+    circles[i].text.setAttribute("y",y);
+    circles[i].text.textContent=permValues[i];
+    // fill by default
+    circles[i].circle.setAttribute("fill",circleColor);
+    circles[i].circle.setAttribute("stroke","none");
+  }
+  poly.setAttribute("points",positions.map(p=>`${p.x},${p.y}`).join(" "));
+  renderMatrix();
+}
+
+/* MATRIX */
+function renderMatrix(){
+  matrixDiv.innerHTML="";
+  permValues.forEach(v=>{
+    const d=document.createElement("div");
+    d.className="cell";
+    d.textContent=v;
+    matrixDiv.appendChild(d);
+  });
+}
+
+/* CYCLE NOTATION */
+function permutationToCycles(perm){
+  const visited=Array(perm.length).fill(false);
+  const cycles=[];
+  for(let i=0;i<perm.length;i++){
+    if(visited[i]) continue;
+    let cycle=[];
+    let current=i;
+    while(!visited[current]){
+      visited[current]=true;
+      cycle.push(current+1);
+      current=perm[current];
+    }
+    if(cycle.length>1) cycles.push(`(${cycle.join(" ")})`);
+  }
+  return cycles.length?cycles.join(""):"( )";
+}
+
+/* MIDI CC */
+function sendCC(cc,value){
+  if(!midiOut) return;
+  const start=midiOut._last?.[cc]??0;
+  const steps=Math.max(1,Math.floor(rampTime/20));
+  for(let i=0;i<=steps;i++){
+    setTimeout(()=>{
+      const v=Math.round(start+(value-start)*i/steps);
+      midiOut.send([0xB0,cc,v]);
+      pulsePolygon();
+      midiOut._last=midiOut._last||{};
+      midiOut._last[cc]=v;
+    },i*(rampTime/steps));
+  }
+}
+
+/* APPLY PERM */
+function applyPerm(arr){
+  const old=[...permValues];
+  permValues=arr.map(i=>values[i]);
+  renderAnimated(old);
+  permValues.forEach((v,i)=>sendCC(i+1,v));
+
+  document.getElementById("permDisplay").textContent=`[ ${permValues.join(" ")} ]`;
+  document.getElementById("cycleDisplay").textContent=permutationToCycles(arr);
+
+  logDiv.innerHTML+=`[ ${permValues.join(" ")} ]<br>`;
+}
+
+/* OPS */
+function rot(k){ lastOpType="rot"; flashButton(`btn-r${k}`); applyPerm([...Array(N)].map((_,i)=>(i+k)%N)); }
+function ref(k){ lastOpType="ref"; flashButton(`btn-s${k}`); applyPerm([...Array(N)].map((_,i)=>(N-i+k)%N)); }
+
+/* BUTTON FX */
+function flashButton(id){
+  const b=document.getElementById(id);
+  if(!b) return;
+  b.classList.add("active");
+  setTimeout(()=>b.classList.remove("active"),120);
+}
+
+/* RANDOM */
+function generate(){
+  flashGenerateButton();
+  values=Array.from({length:N},()=>Math.floor(Math.random()*128));
+  permValues=[...values];
+  circleColor=randomColor();
+  logDiv.innerHTML=`<strong>[ ${values.join(" ")} ]</strong><br>`;
+  render();
+}
+
+/* FLASH GENERATE */
+function flashGenerateButton(){
+  const b=document.getElementById("btn-generate");
+  if(!b) return;
+  b.classList.add("flash-red");
+  setTimeout(()=>b.classList.remove("flash-red"),150);
+}
+
+/* RANDOM COLOR (avoid black) */
+function randomColor(){
+  let c;
+  do { c=`hsl(${Math.random()*360},70%,60%)`; } while(c==="rgb(0,0,0)");
+  return c;
+}
+
+/* KEYBOARD */
+document.addEventListener("keydown",e=>{
+  const map={"1":()=>rot(0),"2":()=>rot(1),"3":()=>rot(2),"4":()=>rot(3),"5":()=>rot(4),"6":()=>rot(5),
+             "7":()=>ref(0),"8":()=>ref(1),"9":()=>ref(2),"0":()=>ref(3),"-":()=>ref(4),"=":()=>ref(5)};
+  if(map[e.key]){ e.preventDefault(); map[e.key](); }
+  if(e.code==="Space"){ e.preventDefault(); generate(); }
+});
+
+/* MINI MATRICES */
+const D6=[[0,1,2,3,4,5],[1,2,3,4,5,0],[2,3,4,5,0,1],[3,4,5,0,1,2],[4,5,0,1,2,3],[5,0,1,2,3,4],
+[0,5,4,3,2,1],[1,0,5,4,3,2],[2,1,0,5,4,3],[3,2,1,0,5,4],[4,3,2,1,0,5],[5,4,3,2,1,0]];
+const all=document.getElementById("allMatrices");
+D6.forEach((p,i)=>{
+  const panel=document.createElement("div");
+  panel.className="matrix-panel";
+  panel.innerHTML=`<div class="matrix-title">${i<6?`r${i}`:`sr${i-6}`}</div>`;
+  const g=document.createElement("div");
+  g.className="matrix";
+  p.forEach(n=>{
+    const c=document.createElement("div");
+    c.className="cell";
+    c.textContent=n+1;
+    g.appendChild(c);
+  });
+  panel.appendChild(g);
+  all.appendChild(panel);
+});
+
+/* MIDI INPUT (Note On/Off) */
+navigator.requestMIDIAccess?.().then(midi=>{
+  for(const input of midi.inputs.values()){
+    input.onmidimessage = e=>{
+      const [status, note, velocity] = e.data;
+      if((status&0xf0)===0x90 && velocity>0){ // Note On
+        circles.forEach(c=>{
+          c.circle.setAttribute("fill",circleColor);
+          c.circle.setAttribute("stroke","none");
+        });
+      }
+      if((status&0xf0)===0x80 || ((status&0xf0)===0x90 && velocity===0)){ // Note Off
+        circles.forEach(c=>{
+          c.circle.setAttribute("fill","none");
+          c.circle.setAttribute("stroke",circleColor);
+          c.circle.setAttribute("stroke-width","2");
+          c.circle.setAttribute("stroke-dasharray",""); // solid line
+        });
+      }
+    };
+  }
+});
+
+/* START */
+render();
+</script>
+
+</body>
+</html>

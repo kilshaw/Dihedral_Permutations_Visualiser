@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>D₆ Dihedral Group – Conjugacy Classes</title>
+<style>
+body {
+  margin: 0;
+  background: #111;
+  color: #eee;
+  font-family: system-ui, sans-serif;
+}
+.container {
+  display: flex;
+  gap: 40px;
+  padding: 20px;
+  justify-content: center;
+  align-items: flex-start;
+}
+svg {
+  background: #1c1c1c;
+  border-radius: 12px;
+}
+button {
+  margin: 4px;
+  padding: 6px 12px;
+  font-size: 14px;
+  cursor: pointer;
+}
+.controls {
+  text-align: center;
+  margin-top: 10px;
+}
+.perm {
+  margin-top: 6px;
+  font-family: monospace;
+  text-align: center;
+}
+.trail {
+  stroke: #aaa;
+  stroke-width: 2;
+  stroke-dasharray: 5 5;
+  opacity: 0.6;
+  transition: opacity 2.8s ease;
+}
+.panel {
+  background: #1c1c1c;
+  border-radius: 12px;
+  padding: 16px 20px;
+  min-width: 250px;
+}
+.panel .title {
+  text-align: center;
+  font-weight: 600;
+  margin-bottom: 10px;
+}
+.matrix {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.cell {
+  height: 42px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  font-size: 16px;
+  color: #000;
+}
+</style>
+</head>
+<body>
+<div class="container">
+
+  <!-- Left: Hexagon -->
+  <div>
+    <svg id="svg" width="400" height="400" viewBox="-200 -200 400 400"></svg>
+    <div class="controls">
+      <strong>Rotations</strong><br>
+      <button onclick="applyRotation(0)">r⁰</button>
+      <button onclick="applyRotation(1)">r¹</button>
+      <button onclick="applyRotation(2)">r²</button>
+      <button onclick="applyRotation(3)">r³</button>
+      <button onclick="applyRotation(4)">r⁴</button>
+      <button onclick="applyRotation(5)">r⁵</button>
+      <br><strong>Reflections</strong><br>
+      <button onclick="applyReflection(0)">s</button>
+      <button onclick="applyReflection(1)">sr</button>
+      <button onclick="applyReflection(2)">sr²</button>
+      <button onclick="applyReflection(3)">sr³</button>
+      <button onclick="applyReflection(4)">sr⁴</button>
+      <button onclick="applyReflection(5)">sr⁵</button>
+      <br>
+      <button onclick="reset()">Reset</button>
+    </div>
+    <div class="perm" id="permDisplay"></div>
+    <div class="perm" id="algDisplay"></div>
+  </div>
+
+  <!-- Right: Matrix + Cycles -->
+  <div class="panel">
+   
+    
+    <svg id="cycles" width="230" height="450"></svg>
+   <div class="title">Permutation Matrix</div>
+    <div class="matrix" id="matrix"></div>
+<div class="title">containerised matrices</div>
+</div>
+
+</div>
+
+<script>
+const N = 6;
+const R = 120;
+
+// Current permutation: perm[i] = element at position i
+let perm = [...Array(N).keys()];
+let currentAlgorithm = "e";
+
+// Conjugacy class colors for elements 0..5 (e,r,r²,r³,r⁴,r⁵)
+const colors = ["white","red","blue","purple","green","yellow"];
+
+// Fixed hexagon positions
+const coords = [];
+for(let i=0;i<N;i++){
+  const a = 2*Math.PI*i/N - Math.PI/2;
+  coords.push({x: R*Math.cos(a), y: R*Math.sin(a)});
+}
+
+// Visual circles and labels
+const svg = document.getElementById("svg");
+const matrixDiv = document.getElementById("matrix");
+const cyclesSvg = document.getElementById("cycles");
+const permDisplay = document.getElementById("permDisplay");
+const algDisplay = document.getElementById("algDisplay");
+
+const circles = [], labels = [];
+for(let i=0;i<N;i++){
+  const c = document.createElementNS("http://www.w3.org/2000/svg","circle");
+  c.setAttribute("r",12);
+  svg.appendChild(c);
+  const t = document.createElementNS("http://www.w3.org/2000/svg","text");
+  t.setAttribute("fill","#000");
+  t.setAttribute("text-anchor","middle");
+  t.setAttribute("dominant-baseline","middle");
+  svg.appendChild(t);
+  circles.push(c);
+  labels.push(t);
+}
+
+// Polygon connecting points
+const poly = document.createElementNS("http://www.w3.org/2000/svg","polygon");
+poly.setAttribute("fill","none");
+poly.setAttribute("stroke","#aaa");
+poly.setAttribute("stroke-width","2");
+svg.insertBefore(poly, svg.firstChild);
+
+// Cycle detection
+function cyclesFromPerm(p){
+  const seen = Array(N).fill(false);
+  const cycles = [];
+  for(let i=0;i<N;i++){
+    if(seen[i]) continue;
+    const c = [];
+    let j=i;
+    while(!seen[j]){
+      seen[j]=true;
+      c.push(j);
+      j=p[j];
+    }
+    cycles.push(c);
+  }
+  return cycles;
+}
+
+// Render cycles with conjugacy colors
+function renderCycles(){
+  cyclesSvg.innerHTML="";
+  const cycles = cyclesFromPerm(perm);
+  let y = 30;
+  for(const cycle of cycles){
+    const cx = 115;
+    const r = 25 + 6*cycle.length;
+    cycle.forEach((v,i)=>{
+      const angle = 2*Math.PI*i/cycle.length;
+      const x = cx + r*Math.cos(angle);
+      const yy = y + r*Math.sin(angle);
+      const circle = document.createElementNS("http://www.w3.org/2000/svg","circle");
+      circle.setAttribute("cx",x);
+      circle.setAttribute("cy",yy);
+      circle.setAttribute("r",10);
+      circle.setAttribute("fill",colors[v]);
+      cyclesSvg.appendChild(circle);
+      const text = document.createElementNS("http://www.w3.org/2000/svg","text");
+      text.setAttribute("x",x);
+      text.setAttribute("y",yy);
+      text.setAttribute("text-anchor","middle");
+      text.setAttribute("dominant-baseline","middle");
+      text.setAttribute("font-size","10");
+      text.textContent = v+1;
+      cyclesSvg.appendChild(text);
+      const na = 2*Math.PI*((i+1)%cycle.length)/cycle.length;
+      const nx = cx + r*Math.cos(na);
+      const ny = y + r*Math.sin(na);
+      const line = document.createElementNS("http://www.w3.org/2000/svg","line");
+      line.setAttribute("x1",x);
+      line.setAttribute("y1",yy);
+      line.setAttribute("x2",nx);
+      line.setAttribute("y2",ny);
+      line.setAttribute("stroke","#888");
+      cyclesSvg.appendChild(line);
+    });
+    y+=2*r+25;
+  }
+}
+
+// Render matrix with conjugacy colors
+function renderMatrix(){
+  matrixDiv.innerHTML="";
+  perm.forEach(i=>{
+    const d=document.createElement("div");
+    d.className="cell";
+    d.textContent=i+1;
+    d.style.background=colors[i];
+    matrixDiv.appendChild(d);
+  });
+}
+
+// Trails
+function drawTrails(oldPerm){
+  for(let i=0;i<N;i++){
+    const elem = perm[i];
+    const oldIndex = oldPerm.indexOf(elem);
+    const from = coords[oldIndex];
+    const to = coords[i];
+    if(from===to) continue;
+    const line = document.createElementNS("http://www.w3.org/2000/svg","line");
+    line.setAttribute("x1",from.x);
+    line.setAttribute("y1",from.y);
+    line.setAttribute("x2",to.x);
+    line.setAttribute("y2",to.y);
+    line.setAttribute("class","trail");
+    svg.insertBefore(line, svg.firstChild);
+    requestAnimationFrame(()=>line.style.opacity="0");
+    setTimeout(()=>svg.removeChild(line),800);
+  }
+}
+
+// Render all
+function render(oldPerm=null){
+  if(oldPerm) drawTrails(oldPerm);
+  const polyPts=[];
+  for(let i=0;i<N;i++){
+    const pos = coords[i];
+    const elem = perm[i];
+    circles[i].setAttribute("cx", pos.x);
+    circles[i].setAttribute("cy", pos.y);
+    circles[i].setAttribute("fill", colors[elem]);
+    labels[i].setAttribute("x", pos.x);
+    labels[i].setAttribute("y", pos.y);
+    labels[i].textContent = elem+1;
+    polyPts.push(`${pos.x},${pos.y}`);
+  }
+  poly.setAttribute("points", polyPts.join(" "));
+  permDisplay.textContent=`Permutation: [ ${perm.map(i=>i+1).join(" ")} ]`;
+  algDisplay.textContent=`Algorithm: ${currentAlgorithm}`;
+  renderMatrix();
+  renderCycles();
+}
+
+// Actions
+function applyRotation(k){
+  const oldPerm = perm.slice();
+  perm = perm.map(i=>(i+k)%N);
+  currentAlgorithm = k===0?"e":`r${sup(k)}`;
+  render(oldPerm);
+}
+function applyReflection(k){
+  const oldPerm = perm.slice();
+  perm = perm.map(i=>(N-i+k)%N);
+  currentAlgorithm = k===0?"s":`sr${sup(k)}`;
+  render(oldPerm);
+}
+function reset(){
+  perm = [...Array(N).keys()];
+  currentAlgorithm = "e";
+  render();
+}
+function sup(n){const s=["⁰","¹","²","³","⁴","⁵"];return String(n).split("").map(d=>s[d]).join("");}
+
+render();
+</script>
+</body>
+</html>

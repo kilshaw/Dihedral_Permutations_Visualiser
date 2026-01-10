@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>MIDI Paired Axes – Trail / Point Cloud Toggle</title>
+<style>
+  body {
+    margin: 0;
+    overflow: hidden;
+    background: #000;
+    font-family: monospace;
+    color: #0f0;
+  }
+
+  #ui {
+    position: fixed;
+    top: 12px;
+    left: 12px;
+    z-index: 10;
+    background: rgba(0,0,0,0.6);
+    padding: 8px 10px;
+    border: 1px solid #0f0;
+  }
+
+  #ccList div {
+    font-size: 14px;
+    line-height: 1.4em;
+  }
+
+  .highlight {
+    color: #ff0;
+    font-weight: bold;
+  }
+
+  #coords {
+    margin-top: 6px;
+    font-size: 14px;
+  }
+
+  button {
+    margin-top: 6px;
+    width: 100%;
+    background: #111;
+    color: #0f0;
+    border: 1px solid #0f0;
+    padding: 4px 0;
+    cursor: pointer;
+  }
+
+  button:hover {
+    background: #0f0;
+    color: #000;
+  }
+
+  #explanation {
+    position: fixed;
+    top: 12px;
+    right: 12px;
+    width: 320px;
+    background: rgba(0,0,0,0.7);
+    border: 1px solid #0f0;
+    font-size: 13px;
+    z-index: 10;
+  }
+
+  #explanationHeader {
+    cursor: pointer;
+    padding: 8px;
+    color: #ff0;
+    font-weight: bold;
+  }
+
+  #explanation.collapsed #explanationContent {
+    display: none;
+  }
+
+  #explanationContent {
+    padding: 8px;
+  }
+</style>
+</head>
+<body>
+
+<div id="ui">
+  <div id="ccList">
+    <div id="cc1">CC1: 0</div>
+    <div id="cc2">CC2: 0</div>
+    <div id="cc3">CC3: 0</div>
+    <div id="cc4">CC4: 0</div>
+    <div id="cc5">CC5: 0</div>
+    <div id="cc6">CC6: 0</div>
+  </div>
+  <div id="coords">x: 0.00, y: 0.00, z: 0.00</div>
+  <button id="reset">RESET</button>
+  <div style="margin-top:6px;font-size:12px">
+    T = Trail · C = Cloud · B = Both
+  </div>
+</div>
+
+<div id="explanation" class="collapsed">
+ <div id="explanationHeader">Dihedral Permutations in Transformational Space – 6D to 3D Projection<br><small>Simon Kilshaw 2025. Click to expand</small></div>
+  <div id="explanationContent">
+    <p>A projection from a six-dimensional discrete space into three-dimensional Euclidean space:</p>
+    <ul>
+      <li>Each CC pair (CC1, CC2), (CC3, CC4), (CC5, CC6) defines a 1D difference axis.</li>
+      <li>The mapping of three pairs → (x, y, z) is a linear projection:<br>
+        x = (CC1 − CC2)/127, y = (CC3 − CC4)/127, z = (CC5 − CC6)/127
+      </li>
+      <li>The resulting 3D point is a projection of the six-dimensional CC vector into 3D, preserving pairwise contrast information.</li>
+      <li>The dominant controller highlights are a form of axis-aligned dominance detection, showing which component of each CC pair contributes most strongly to the projected coordinate.</li>
+      <li>The colored trail represents the trajectory of this high-dimensional system in 3D space, effectively visualising a 6D combinatorial state space in an intuitive and interpretable way.</li>
+      <li>This is a 6D-to-3D linear projection with pairwise difference axes, coupled with dominance-based annotation. The trail encodes the temporal trajectory through this high-dimensional control space.</li>
+    </ul>
+  </div>
+</div>
+
+<script src="https://unpkg.com/three@0.159.0/build/three.min.js"></script>
+
+<script>
+// ==================== MIDI ====================
+let cc = [0,0,0,0,0,0];
+let prevCC = [0,0,0,0,0,0];
+let dirty = false;
+
+navigator.requestMIDIAccess().then(midi => {
+  for (const input of midi.inputs.values()) {
+    input.onmidimessage = e => {
+      const [status, control, value] = e.data;
+      if ((status & 0xF0) === 0xB0 && control >= 1 && control <= 6) {
+        cc[control-1] = value;
+        dirty = true;
+      }
+    };
+  }
+});
+
+// ==================== THREE ====================
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(60, window.innerWidth/window.innerHeight, 0.1, 100);
+const renderer = new THREE.WebGLRenderer({antialias:true});
+renderer.setSize(window.innerWidth, window.innerHeight);
+document.body.appendChild(renderer.domElement);
+
+// mirror planes
+function mirrorPlane(size, color, rot) {
+  const geo = new THREE.PlaneGeometry(size,size);
+  const mat = new THREE.MeshBasicMaterial({
+    color, transparent:true, opacity:0.08,
+    side:THREE.DoubleSide, depthWrite:false
+  });
+  const p = new THREE.Mesh(geo, mat);
+  p.rotation.set(rot.x, rot.y, rot.z);
+  return p;
+}
+
+scene.add(mirrorPlane(3,0xff0000,{x:0,y:Math.PI/2,z:0}));
+scene.add(mirrorPlane(3,0x00ff00,{x:Math.PI/2,y:0,z:0}));
+scene.add(mirrorPlane(3,0x0000ff,{x:0,y:0,z:0}));
+scene.add(new THREE.AxesHelper(1.5));
+
+// point
+const point = new THREE.Mesh(
+  new THREE.SphereGeometry(0.045,16,16),
+  new THREE.MeshBasicMaterial({color:0xffffff})
+);
+scene.add(point);
+
+// ==================== TRAIL ====================
+const TRAIL_LENGTH = 600;
+const trailPositions = new Float32Array(TRAIL_LENGTH*3);
+const trailColors = new Float32Array(TRAIL_LENGTH*3);
+
+const trailGeometry = new THREE.BufferGeometry();
+trailGeometry.setAttribute('position', new THREE.BufferAttribute(trailPositions,3));
+trailGeometry.setAttribute('color', new THREE.BufferAttribute(trailColors,3));
+
+const trail = new THREE.Line(
+  trailGeometry,
+  new THREE.LineBasicMaterial({vertexColors:true, transparent:true, opacity:0.7})
+);
+scene.add(trail);
+
+// ==================== POINT CLOUD ====================
+const cloudGeometry = new THREE.BufferGeometry();
+const cloudPositions = new Float32Array(TRAIL_LENGTH*3);
+const cloudColors = new Float32Array(TRAIL_LENGTH*3);
+
+cloudGeometry.setAttribute('position', new THREE.BufferAttribute(cloudPositions,3));
+cloudGeometry.setAttribute('color', new THREE.BufferAttribute(cloudColors,3));
+
+const cloud = new THREE.Points(
+  cloudGeometry,
+  new THREE.PointsMaterial({
+    size:0.025,
+    vertexColors:true,
+    transparent:true,
+    opacity:0.6
+  })
+);
+scene.add(cloud);
+
+// visibility mode
+let viewMode = "both"; // trail | cloud | both
+
+document.addEventListener('keydown', e => {
+  if (e.key === 't') viewMode = "trail";
+  if (e.key === 'c') viewMode = "cloud";
+  if (e.key === 'b') viewMode = "both";
+
+  trail.visible = (viewMode !== "cloud");
+  cloud.visible = (viewMode !== "trail");
+});
+
+// ==================== HELPERS ====================
+let trailIndex = 0;
+let currentTrailColor = new THREE.Color(0,1,1);
+
+function arraysEqualMultiset(a,b){
+  const sa=a.slice().sort((x,y)=>x-y);
+  const sb=b.slice().sort((x,y)=>x-y);
+  return sa.every((v,i)=>v===sb[i]);
+}
+
+function getBrightColor(){
+  return new THREE.Color(
+    0.5+Math.random()*0.5,
+    0.5+Math.random()*0.5,
+    0.5+Math.random()*0.5
+  );
+}
+
+// ==================== UPDATE ====================
+function updatePointAndUI() {
+  const x = (cc[0]-cc[1])/127;
+  const y = (cc[2]-cc[3])/127;
+  const z = (cc[4]-cc[5])/127;
+
+  if (!arraysEqualMultiset(cc, prevCC)) {
+    currentTrailColor = getBrightColor();
+    prevCC = cc.slice();
+  }
+
+  point.position.set(x,y,z);
+
+  const i = trailIndex;
+  trailPositions[i] = cloudPositions[i] = x;
+  trailPositions[i+1] = cloudPositions[i+1] = y;
+  trailPositions[i+2] = cloudPositions[i+2] = z;
+
+  trailColors[i] = cloudColors[i] = currentTrailColor.r;
+  trailColors[i+1] = cloudColors[i+1] = currentTrailColor.g;
+  trailColors[i+2] = cloudColors[i+2] = currentTrailColor.b;
+
+  trailIndex = (trailIndex + 3) % trailPositions.length;
+
+  trailGeometry.attributes.position.needsUpdate = true;
+  trailGeometry.attributes.color.needsUpdate = true;
+  cloudGeometry.attributes.position.needsUpdate = true;
+  cloudGeometry.attributes.color.needsUpdate = true;
+
+  document.getElementById('coords').textContent =
+    `x: ${x.toFixed(2)}, y: ${y.toFixed(2)}, z: ${z.toFixed(2)}`;
+
+
+// ----------------- CC list -----------------
+for (let i = 1; i <= 6; i++) {
+  const elem = document.getElementById(`cc${i}`);
+  elem.textContent = `CC${i}: ${cc[i-1]}`;
+  elem.classList.remove('highlight');
+}
+
+// dominant pair highlighting
+if (cc[0] !== cc[1])
+  document.getElementById(cc[0] >= cc[1] ? 'cc1' : 'cc2').classList.add('highlight');
+
+if (cc[2] !== cc[3])
+  document.getElementById(cc[2] >= cc[3] ? 'cc3' : 'cc4').classList.add('highlight');
+
+if (cc[4] !== cc[5])
+  document.getElementById(cc[4] >= cc[5] ? 'cc5' : 'cc6').classList.add('highlight');
+
+}
+
+
+// ==================== CAMERA ====================
+let angle = 0;
+function animate(){
+  requestAnimationFrame(animate);
+  angle += 0.0015;
+  camera.position.set(Math.cos(angle)*3,0.9,Math.sin(angle)*3);
+  camera.lookAt(0,0,0);
+  if(dirty){ updatePointAndUI(); dirty=false; }
+  renderer.render(scene,camera);
+}
+animate();
+
+// reset
+document.getElementById('reset').onclick = () => {
+  trailPositions.fill(0);
+  trailColors.fill(0);
+  cloudPositions.fill(0);
+  cloudColors.fill(0);
+  trailIndex = 0;
+};
+
+// collapsible explanation
+document.getElementById('explanationHeader').onclick = () =>
+  document.getElementById('explanation').classList.toggle('collapsed');
+</script>
+
+</body>
+</html>
